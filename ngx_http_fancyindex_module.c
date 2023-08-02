@@ -19,6 +19,8 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <stdbool.h>
+
 #include <ngx_config.h>
 #include <ngx_core.h>
 #include <ngx_http.h>
@@ -26,12 +28,16 @@
 
 #include "template.h"
 
+#include "ngx_http_fancyindex_module.h"
+#include "ngx_http_fancyindex_utils.h"
+
 #if defined(__GNUC__) && (__GNUC__ >= 3)
 # define ngx_force_inline __attribute__((__always_inline__))
 #else /* !__GNUC__ */
 # define ngx_force_inline
 #endif /* __GNUC__ */
 
+#define LOG_TAG "FI"
 
 static const char *short_weekday[] = {
     "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun",
@@ -169,13 +175,6 @@ typedef struct {
     ngx_fancyindex_headerfooter_conf_t header;
     ngx_fancyindex_headerfooter_conf_t footer;
 } ngx_http_fancyindex_loc_conf_t;
-
-#define NGX_HTTP_FANCYINDEX_SORT_CRITERION_NAME       0
-#define NGX_HTTP_FANCYINDEX_SORT_CRITERION_SIZE       1
-#define NGX_HTTP_FANCYINDEX_SORT_CRITERION_DATE       2
-#define NGX_HTTP_FANCYINDEX_SORT_CRITERION_NAME_DESC  3
-#define NGX_HTTP_FANCYINDEX_SORT_CRITERION_SIZE_DESC  4
-#define NGX_HTTP_FANCYINDEX_SORT_CRITERION_DATE_DESC  5
 
 static ngx_conf_enum_t ngx_http_fancyindex_sort_criteria[] = {
     { ngx_string("name"), NGX_HTTP_FANCYINDEX_SORT_CRITERION_NAME },
@@ -669,8 +668,14 @@ make_content_buf(
 {
     ngx_http_fancyindex_entry_t *entry;
 
+    ngx_http_fancyindex_sort_t sortCriteria = {0};
+    ngx_http_fancyindex_filter_t filterCriteria = {0};
+
     int (*sort_cmp_func)(const void *, const void *);
-    const char  *sort_url_args = "";
+    char sort_url_args[64] = {0};
+
+    char table_header[sizeof(t06_list1) +
+                      sizeof(sort_url_args) * 6] = {0};
 
     off_t        length;
     size_t       len, root, allocated, escape_html;
@@ -687,6 +692,21 @@ make_content_buf(
     static const char    *sizes[]  = { "EiB", "PiB", "TiB", "GiB", "MiB", "KiB", "B" };
     static const int64_t  exbibyte = 1024LL * 1024LL * 1024LL *
                                      1024LL * 1024LL * 1024LL;
+
+    /* Read sort criteria and filters */
+    sortCriteria = ngx_http_fancyindex_get_sort_criteria(r, alcf->default_sort);
+    filterCriteria = ngx_http_fancyindex_get_filter_criteria(r);
+
+    ngx_http_fancyindex_get_url_args(r, &sortCriteria, NULL, &sort_url_args[0], sizeof(sort_url_args));
+
+    /* Prepare table header */
+    ngx_sprintf((unsigned char*)table_header, (const char*)t06_list1,
+                ngx_http_fancyindex_get_href(r, NGX_HTTP_FANCYINDEX_SORT_CRITERION_NAME,      filterCriteria),
+                ngx_http_fancyindex_get_href(r, NGX_HTTP_FANCYINDEX_SORT_CRITERION_NAME_DESC, filterCriteria),
+                ngx_http_fancyindex_get_href(r, NGX_HTTP_FANCYINDEX_SORT_CRITERION_SIZE,      filterCriteria),
+                ngx_http_fancyindex_get_href(r, NGX_HTTP_FANCYINDEX_SORT_CRITERION_SIZE_DESC, filterCriteria),
+                ngx_http_fancyindex_get_href(r, NGX_HTTP_FANCYINDEX_SORT_CRITERION_DATE,      filterCriteria),
+                ngx_http_fancyindex_get_href(r, NGX_HTTP_FANCYINDEX_SORT_CRITERION_DATE_DESC, filterCriteria));
 
     /*
      * NGX_DIR_MASK_LEN is lesser than NGX_HTTP_FANCYINDEX_PREALLOCATE
@@ -738,6 +758,10 @@ make_content_buf(
 
     filename = path.data;
     filename[path.len] = '/';
+
+    ngx_log_error(NGX_LOG_INFO, r->connection->log, 0,
+                  LOG_TAG "::make_content_buf() Read directory: %s ",
+                  path.data);
 
     /* Read directory entries and their associated information. */
     for (;;) {
@@ -828,6 +852,20 @@ make_content_buf(
             }
         }
 
+        if (!ngx_de_is_dir(&dir)) {
+
+            time_t mtime = ngx_de_mtime(&dir) * 1000L /* msecs */;
+
+            /* Filter by time */
+            if (((filterCriteria.mTimeLessOrEqualMs != NGX_HTTP_FANCYINDEX_FILTER_UNDEF) &&
+                 (filterCriteria.mTimeLessOrEqualMs < mtime)) ||
+                ((filterCriteria.mTimeGreaterOrEqualMs != NGX_HTTP_FANCYINDEX_FILTER_UNDEF) &&
+                 (filterCriteria.mTimeGreaterOrEqualMs > mtime))) {
+
+                continue;
+            }
+        }
+
         if ((entry = ngx_array_push(&entries)) == NULL)
             return ngx_http_fancyindex_error(r, &dir, &path);
 
@@ -851,6 +889,12 @@ make_content_buf(
                 ngx_strncasecmp(r->headers_out.charset.data, (u_char*) "utf-8", 5) == 0)
             ?  ngx_utf8_length(entry->name.data, entry->name.len)
             : len;
+
+        ngx_log_error(NGX_LOG_INFO, r->connection->log, 0,
+                      LOG_TAG "make_content_buf() Add row: %s, dir: %s, mtime: %d",
+                      entry->name.data,
+                      entry->dir ? "true" : "false",
+                      entry->mtime);
     }
 
     if (ngx_close_dir(&dir) == NGX_ERROR) {
@@ -867,14 +911,14 @@ make_content_buf(
     if (alcf->show_path)
         len = r->uri.len + escape_html
           + ngx_sizeof_ssz(t05_body2)
-          + ngx_sizeof_ssz(t06_list1)
+          + strlen(table_header)
           + ngx_sizeof_ssz(t_parentdir_entry)
           + ngx_sizeof_ssz(t07_list2)
           + ngx_fancyindex_timefmt_calc_size (&alcf->time_format) * entries.nelts
           ;
    else
         len = r->uri.len + escape_html
-          + ngx_sizeof_ssz(t06_list1)
+          + strlen(table_header)
           + ngx_sizeof_ssz(t_parentdir_entry)
           + ngx_sizeof_ssz(t07_list2)
           + ngx_fancyindex_timefmt_calc_size (&alcf->time_format) * entries.nelts
@@ -901,7 +945,7 @@ make_content_buf(
          */
         len += ngx_sizeof_ssz("<tr><td colspan=\"2\" class=\"link\"><a href=\"")
             + entry[i].name.len + entry[i].escape /* Escaped URL */
-            + ngx_sizeof_ssz("?C=x&amp;O=y") /* URL sorting arguments */
+            + strlen(sort_url_args) /* URL sorting arguments */
             + ngx_sizeof_ssz("\" title=\"")
             + entry[i].name.len + entry[i].utf_len + entry[i].escape_html
             + ngx_sizeof_ssz("\">")
@@ -917,93 +961,31 @@ make_content_buf(
     if ((b = ngx_create_temp_buf(r->pool, len)) == NULL)
         return NGX_HTTP_INTERNAL_SERVER_ERROR;
 
-    /*
-     * Determine the sorting criteria. URL arguments look like:
-     *
-     *    C=x[&O=y]
-     *
-     * Where x={M,S,N} and y={A,D}
-     */
-    if ((r->args.len == 3 || (r->args.len == 7 && r->args.data[3] == '&')) &&
-        r->args.data[0] == 'C' && r->args.data[1] == '=')
-    {
-        /* Determine whether the direction of the sorting */
-        ngx_int_t sort_descending = r->args.len == 7
-                                 && r->args.data[4] == 'O'
-                                 && r->args.data[5] == '='
-                                 && r->args.data[6] == 'D';
-
-        /* Pick the sorting criteria */
-        switch (r->args.data[2]) {
-            case 'M': /* Sort by mtime */
-                if (sort_descending) {
-                    sort_cmp_func = ngx_http_fancyindex_cmp_entries_mtime_desc;
-                    if (alcf->default_sort != NGX_HTTP_FANCYINDEX_SORT_CRITERION_DATE_DESC)
-                        sort_url_args = "?C=M&amp;O=D";
-                }
-                else {
-                    sort_cmp_func = ngx_http_fancyindex_cmp_entries_mtime_asc;
-                    if (alcf->default_sort != NGX_HTTP_FANCYINDEX_SORT_CRITERION_DATE)
-                        sort_url_args = "?C=M&amp;O=A";
-                }
-                break;
-            case 'S': /* Sort by size */
-                if (sort_descending) {
-                    sort_cmp_func = ngx_http_fancyindex_cmp_entries_size_desc;
-                    if (alcf->default_sort != NGX_HTTP_FANCYINDEX_SORT_CRITERION_SIZE_DESC)
-                        sort_url_args = "?C=S&amp;O=D";
-                }
-                else {
-                    sort_cmp_func = ngx_http_fancyindex_cmp_entries_size_asc;
-                        if (alcf->default_sort != NGX_HTTP_FANCYINDEX_SORT_CRITERION_SIZE)
-                    sort_url_args = "?C=S&amp;O=A";
-                }
-                break;
-            case 'N': /* Sort by name */
-            default:
-                if (sort_descending) {
-                    sort_cmp_func = alcf->case_sensitive
-                        ? ngx_http_fancyindex_cmp_entries_name_cs_desc
-                        : ngx_http_fancyindex_cmp_entries_name_ci_desc;
-                    if (alcf->default_sort != NGX_HTTP_FANCYINDEX_SORT_CRITERION_NAME_DESC)
-                        sort_url_args = "?C=N&amp;O=D";
-                }
-                else {
-                    sort_cmp_func = alcf->case_sensitive
-                        ? ngx_http_fancyindex_cmp_entries_name_cs_asc
-                        : ngx_http_fancyindex_cmp_entries_name_ci_asc;
-                    if (alcf->default_sort != NGX_HTTP_FANCYINDEX_SORT_CRITERION_NAME)
-                        sort_url_args = "?C=N&amp;O=A";
-                }
-                break;
-        }
-    }
-    else {
-        switch (alcf->default_sort) {
-            case NGX_HTTP_FANCYINDEX_SORT_CRITERION_DATE_DESC:
-                sort_cmp_func = ngx_http_fancyindex_cmp_entries_mtime_desc;
-                break;
-            case NGX_HTTP_FANCYINDEX_SORT_CRITERION_DATE:
-                sort_cmp_func = ngx_http_fancyindex_cmp_entries_mtime_asc;
-                break;
-            case NGX_HTTP_FANCYINDEX_SORT_CRITERION_SIZE_DESC:
-                sort_cmp_func = ngx_http_fancyindex_cmp_entries_size_desc;
-                break;
-            case NGX_HTTP_FANCYINDEX_SORT_CRITERION_SIZE:
-                sort_cmp_func = ngx_http_fancyindex_cmp_entries_size_asc;
-                break;
-            case NGX_HTTP_FANCYINDEX_SORT_CRITERION_NAME_DESC:
-                sort_cmp_func = alcf->case_sensitive
-                    ? ngx_http_fancyindex_cmp_entries_name_cs_desc
-                    : ngx_http_fancyindex_cmp_entries_name_ci_desc;
-                break;
-            case NGX_HTTP_FANCYINDEX_SORT_CRITERION_NAME:
-            default:
-                sort_cmp_func = alcf->case_sensitive
-                    ? ngx_http_fancyindex_cmp_entries_name_cs_asc
-                    : ngx_http_fancyindex_cmp_entries_name_ci_asc;
-                break;
-        }
+    /* Determine the sorting criteria */
+    switch (sortCriteria) {
+        case NGX_HTTP_FANCYINDEX_SORT_CRITERION_DATE_DESC:
+            sort_cmp_func = ngx_http_fancyindex_cmp_entries_mtime_desc;
+            break;
+        case NGX_HTTP_FANCYINDEX_SORT_CRITERION_DATE:
+            sort_cmp_func = ngx_http_fancyindex_cmp_entries_mtime_asc;
+            break;
+        case NGX_HTTP_FANCYINDEX_SORT_CRITERION_SIZE_DESC:
+            sort_cmp_func = ngx_http_fancyindex_cmp_entries_size_desc;
+            break;
+        case NGX_HTTP_FANCYINDEX_SORT_CRITERION_SIZE:
+            sort_cmp_func = ngx_http_fancyindex_cmp_entries_size_asc;
+            break;
+        case NGX_HTTP_FANCYINDEX_SORT_CRITERION_NAME_DESC:
+            sort_cmp_func = alcf->case_sensitive
+                ? ngx_http_fancyindex_cmp_entries_name_cs_desc
+                : ngx_http_fancyindex_cmp_entries_name_ci_desc;
+            break;
+        case NGX_HTTP_FANCYINDEX_SORT_CRITERION_NAME:
+        default:
+            sort_cmp_func = alcf->case_sensitive
+                ? ngx_http_fancyindex_cmp_entries_name_cs_asc
+                : ngx_http_fancyindex_cmp_entries_name_ci_asc;
+            break;
     }
 
     /* Sort entries, if needed */
@@ -1052,7 +1034,7 @@ make_content_buf(
     }
 
     /* Open the <table> tag */
-    b->last = ngx_cpymem_ssz(b->last, t06_list1);
+    b->last = ngx_copy(b->last, table_header, strlen(table_header));
 
     tp = ngx_timeofday();
 
@@ -1064,7 +1046,7 @@ make_content_buf(
         if (*sort_url_args) {
             b->last = ngx_cpymem(b->last,
                                  sort_url_args,
-                                 ngx_sizeof_ssz("?C=N&amp;O=A"));
+                                 strlen(sort_url_args));
         }
         b->last = ngx_cpymem_ssz(b->last,
                                  "\">Parent directory/</a></td>"
@@ -1076,6 +1058,27 @@ make_content_buf(
 
     /* Entries for directories and files */
     for (i = 0; i < entries.nelts; i++) {
+
+        if (entry[i].dir == false) {
+
+            ++filterCriteria.filesCounter;
+
+            if ((filterCriteria.filesCountMax != NGX_HTTP_FANCYINDEX_FILTER_UNDEF) &&
+                (filterCriteria.filesCountMax < filterCriteria.filesCounter)) {
+
+                continue;
+            }
+        }
+        else {
+            ++filterCriteria.dirsCounter;
+
+            if ((filterCriteria.dirsCountMax != NGX_HTTP_FANCYINDEX_FILTER_UNDEF) &&
+                (filterCriteria.dirsCountMax < filterCriteria.dirsCounter)) {
+
+                continue;
+            }
+        }
+
         b->last = ngx_cpymem_ssz(b->last, "<tr><td colspan=\"2\" class=\"link\"><a href=\"");
 
         if (entry[i].escape) {
@@ -1094,7 +1097,7 @@ make_content_buf(
             if (*sort_url_args) {
                 b->last = ngx_cpymem(b->last,
                                      sort_url_args,
-                                     ngx_sizeof_ssz("?C=x&amp;O=y"));
+                                     strlen(sort_url_args));
             }
         }
 
