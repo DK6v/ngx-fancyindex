@@ -114,6 +114,12 @@ ngx_http_fancyindex_filter_t ngx_http_fancyindex_get_filter_criteria(ngx_http_re
     retFilterCriteria.filesCountMax =
         ngx_http_fancyindex_getarg_num(r, "files", NGX_HTTP_FANCYINDEX_FILTER_UNDEF);
 
+    retFilterCriteria.mTimeLessThanMs =
+        ngx_http_fancyindex_getarg_num(r, "lt", NGX_HTTP_FANCYINDEX_FILTER_UNDEF);
+
+    retFilterCriteria.mTimeGreaterThanMs =
+        ngx_http_fancyindex_getarg_num(r, "gt", NGX_HTTP_FANCYINDEX_FILTER_UNDEF);
+
     retFilterCriteria.mTimeLessOrEqualMs =
         ngx_http_fancyindex_getarg_num(r, "le", NGX_HTTP_FANCYINDEX_FILTER_UNDEF);
 

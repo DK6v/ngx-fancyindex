@@ -37,6 +37,8 @@
 typedef struct {
     long dirsCountMax;
     long filesCountMax;
+    long mTimeLessThanMs;
+    long mTimeGreaterThanMs;
     long mTimeLessOrEqualMs;
     long mTimeGreaterOrEqualMs;
 
