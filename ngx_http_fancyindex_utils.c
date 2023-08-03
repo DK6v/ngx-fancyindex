@@ -114,6 +114,12 @@ ngx_http_fancyindex_filter_t ngx_http_fancyindex_get_filter_criteria(ngx_http_re
     retFilterCriteria.filesCountMax =
         ngx_http_fancyindex_getarg_num(r, "files", NGX_HTTP_FANCYINDEX_FILTER_UNDEF);
 
+    retFilterCriteria.mTimeLessThanMs =
+        ngx_http_fancyindex_getarg_num(r, "lt", NGX_HTTP_FANCYINDEX_FILTER_UNDEF);
+
+    retFilterCriteria.mTimeGreaterThanMs =
+        ngx_http_fancyindex_getarg_num(r, "gt", NGX_HTTP_FANCYINDEX_FILTER_UNDEF);
+
     retFilterCriteria.mTimeLessOrEqualMs =
         ngx_http_fancyindex_getarg_num(r, "le", NGX_HTTP_FANCYINDEX_FILTER_UNDEF);
 
@@ -166,18 +172,18 @@ ngx_err_t ngx_http_fancyindex_get_url_args(ngx_http_request_t *r,
 
     if (filterCriteria != NULL) {
 
-        if (filterCriteria->dirsCountMax != NGX_HTTP_FANCYINDEX_FILTER_UNDEF) {
+        if (filterCriteria->mTimeLessThanMs != NGX_HTTP_FANCYINDEX_FILTER_UNDEF) {
             npos += snprintf(npos, (epos - npos),
-                             "%sdirs=%ld", (npos == out) ? "?" : "&amp;",
-                             filterCriteria->dirsCountMax);
+                             "%slt=%ld", (npos == out) ? "?" : "&amp;",
+                             filterCriteria->mTimeLessThanMs);
         }
 
-        if (filterCriteria->filesCountMax != NGX_HTTP_FANCYINDEX_FILTER_UNDEF) {
+        if (filterCriteria->mTimeGreaterThanMs != NGX_HTTP_FANCYINDEX_FILTER_UNDEF) {
             npos += snprintf(npos, (epos - npos),
-                             "%sfiles=%ld", (npos == out) ? "?" : "&amp;",
-                             filterCriteria->filesCountMax);
+                             "%sgt=%ld", (npos == out) ? "?" : "&amp;",
+                             filterCriteria->mTimeGreaterThanMs);
         }
-
+        
         if (filterCriteria->mTimeLessOrEqualMs != NGX_HTTP_FANCYINDEX_FILTER_UNDEF) {
             npos += snprintf(npos, (epos - npos),
                              "%sle=%ld", (npos == out) ? "?" : "&amp;",
@@ -188,6 +194,18 @@ ngx_err_t ngx_http_fancyindex_get_url_args(ngx_http_request_t *r,
             npos += snprintf(npos, (epos - npos),
                              "%sge=%ld", (npos == out) ? "?" : "&amp;",
                              filterCriteria->mTimeGreaterOrEqualMs);
+        }
+
+        if (filterCriteria->dirsCountMax != NGX_HTTP_FANCYINDEX_FILTER_UNDEF) {
+            npos += snprintf(npos, (epos - npos),
+                             "%sdirs=%ld", (npos == out) ? "?" : "&amp;",
+                             filterCriteria->dirsCountMax);
+        }
+
+        if (filterCriteria->filesCountMax != NGX_HTTP_FANCYINDEX_FILTER_UNDEF) {
+            npos += snprintf(npos, (epos - npos),
+                             "%sfiles=%ld", (npos == out) ? "?" : "&amp;",
+                             filterCriteria->filesCountMax);
         }
     }
 
