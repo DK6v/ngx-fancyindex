@@ -856,10 +856,14 @@ make_content_buf(
             time_t mtime = ngx_de_mtime(&dir) * 1000L /* msecs */;
 
             /* Filter by time */
-            if (((filterCriteria.mTimeLessOrEqualMs != NGX_HTTP_FANCYINDEX_FILTER_UNDEF) &&
-                 (filterCriteria.mTimeLessOrEqualMs < mtime)) ||
+            if (((filterCriteria.mTimeLessThanMs != NGX_HTTP_FANCYINDEX_FILTER_UNDEF) &&
+                 (mtime >= filterCriteria.mTimeLessThanMs)) ||
+                ((filterCriteria.mTimeGreaterThanMs != NGX_HTTP_FANCYINDEX_FILTER_UNDEF) &&
+                 (mtime <= filterCriteria.mTimeGreaterThanMs)) ||
+                ((filterCriteria.mTimeLessOrEqualMs != NGX_HTTP_FANCYINDEX_FILTER_UNDEF) &&
+                 (mtime > filterCriteria.mTimeLessOrEqualMs)) ||
                 ((filterCriteria.mTimeGreaterOrEqualMs != NGX_HTTP_FANCYINDEX_FILTER_UNDEF) &&
-                 (filterCriteria.mTimeGreaterOrEqualMs > mtime))) {
+                 (mtime < filterCriteria.mTimeGreaterOrEqualMs))) {
 
                 continue;
             }
