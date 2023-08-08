@@ -28,7 +28,9 @@
 #ifndef NGX_HTTP_FANCYINDEX_UTILS_H
 #define NGX_HTTP_FANCYINDEX_UTILS_H
 
+#include <ngx_config.h>
 #include <ngx_core.h>
+#include <ngx_http.h>
 
 #include "ngx_http_fancyindex_module.h"
 

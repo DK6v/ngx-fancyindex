@@ -23,6 +23,7 @@
  * OTHER DEALINGS IN THE SOFTWARE.
  */
 
+#include <stdbool.h>
 #include <string.h>
 
 #include <ngx_config.h>
@@ -33,14 +34,18 @@
 #include "ngx_http_fancyindex_module.h"
 #include "ngx_http_fancyindex_utils.h"
 
+#if defined(__GNUC__) && (__GNUC__ >= 3)
+# define ngx_force_inline __attribute__((__always_inline__))
+#else /* !__GNUC__ */
+# define ngx_force_inline
+#endif /* __GNUC__ */
+
 #define LOG_TAG "FI"
 
 #define NGX_FANCY_INDEX_FORMAT_STRING_MAX_LEN   128
 #define NGX_FANCY_INDEX_FORMAT_STRING_MAX_NUM   16
 
 #define MIN(x, y) (((x) < (y)) ? (x) : (y))
-
-#define strnchr(_str, _chr, _num) memchr(_str, _chr, strnlen(_str, _num))
 
 static uint stringBufferIx = 0;
 static char stringBuffers[NGX_FANCY_INDEX_FORMAT_STRING_MAX_NUM]
